@@ -9,12 +9,12 @@
 </head>
 <body class="bg-zinc-950 text-white p-4 max-w-2xl mx-auto">
 <h1 class="text-3xl font-bold mb-2">NRFI/YRFI Predictor</h1>
-<p class="text-zinc-400 mb-4">Self-evolving • SportsDataIO + MLB API</p>
+<p class="text-zinc-400 mb-4">Self-evolving • SportsDataIO Trial</p>
 
 <div class="mb-6 p-4 bg-zinc-900 rounded-3xl">
-  <label class="block text-xs mb-2">SportsDataIO API Key (trial)</label>
-  <input id="apiKey" type="text" placeholder="Paste your key" class="w-full bg-zinc-800 rounded-2xl px-4 py-3 text-sm">
-  <button onclick="saveApiKey()" class="mt-3 bg-green-600 hover:bg-green-500 px-6 py-2 rounded-xl text-sm">Save & Refresh</button>
+  <label class="block text-xs mb-2">SportsDataIO API Key</label>
+  <input id="apiKey" type="text" placeholder="Paste key here" class="w-full bg-zinc-800 rounded-2xl px-4 py-3 text-sm">
+  <button onclick="saveApiKey()" class="mt-3 bg-green-600 hover:bg-green-500 px-6 py-2 rounded-xl text-sm">Save & Refresh Games</button>
 </div>
 
 <div id="top-plays" class="grid grid-cols-1 gap-4 mb-8"></div>
@@ -23,12 +23,13 @@
 <div id="games-list" class="space-y-6"></div>
 
 <div class="mt-12 text-xs text-zinc-500">
-  <p>Tap Predict → fill stats using TeamRankings & FanGraphs links. Log results to evolve the model.</p>
-  <button onclick="showHistory()" class="text-blue-400 underline">View/Edit History & Re-train</button>
+  <p>Make predictions → Top 4 auto-updates. Log actual results later to evolve the model.</p>
+  <button onclick="showHistory()" class="text-blue-400 underline">View History & Re-train</button>
 </div>
 
 <script>
 let apiKey = localStorage.getItem('sportsDataIOKey') || '';
+let allPredictions = [];
 
 function saveApiKey() {
   apiKey = document.getElementById('apiKey').value.trim();
@@ -39,24 +40,24 @@ function saveApiKey() {
 async function fetchTodayGames() {
   const date = new Date().toISOString().split('T')[0];
   const container = document.getElementById('games-list');
-  container.innerHTML = '<p class="text-zinc-400">Loading today's games...</p>';
+  container.innerHTML = '<p class="text-zinc-400">Loading games...</p>';
 
   let games = [];
 
-  // Try SportsDataIO first
+  // Try SportsDataIO
   if (apiKey) {
     try {
       const url = `https://api.sportsdata.io/v3/mlb/scores/json/GamesByDate/${date}?key=${apiKey}`;
       const res = await fetch(url);
       if (res.ok) games = await res.json();
-    } catch(e) {}
+    } catch(e) { console.log('SportsDataIO failed'); }
   }
 
-  // Fallback to free MLB API (better for probable pitchers today)
+  // Strong fallback to official MLB API (better for probable pitchers)
   if (games.length === 0) {
     try {
-      const fallbackUrl = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${date}&hydrate=probablePitcher`;
-      const res = await fetch(fallbackUrl);
+      const url = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${date}&hydrate=probablePitcher`;
+      const res = await fetch(url);
       const data = await res.json();
       games = data.dates?.[0]?.games || [];
     } catch(e) {}
@@ -64,8 +65,6 @@ async function fetchTodayGames() {
 
   renderGames(games);
 }
-
-let allPredictions = []; // Store predictions to build Top 4
 
 function renderGames(games) {
   const container = document.getElementById('games-list');
@@ -75,23 +74,19 @@ function renderGames(games) {
   games.forEach(game => {
     let away = game.AwayTeam || game.teams?.away?.team?.name || 'Away';
     let home = game.HomeTeam || game.teams?.home?.team?.name || 'Home';
-    let awayPitcher = game.AwayProbablePitcher || game.teams?.away?.probablePitcher?.fullName || 'TBD';
-    let homePitcher = game.HomeProbablePitcher || game.teams?.home?.probablePitcher?.fullName || 'TBD';
-
-    // Clean up abbreviations if needed
-    if (away.length > 10) away = away.split(' ').pop();
-    if (home.length > 10) home = home.split(' ').pop();
+    let awayP = game.AwayProbablePitcher || game.teams?.away?.probablePitcher?.fullName || 'TBD';
+    let homeP = game.HomeProbablePitcher || game.teams?.home?.probablePitcher?.fullName || 'TBD';
 
     const div = document.createElement('div');
     div.className = 'bg-zinc-900 rounded-3xl p-5';
     div.innerHTML = `
       <div class="flex justify-between items-start">
-        <div>
+        <div class="flex-1">
           <div class="font-medium">${away} @ ${home}</div>
-          <div class="text-sm text-zinc-400">${awayPitcher} vs ${homePitcher}</div>
+          <div class="text-sm text-zinc-400">${awayP} vs ${homeP}</div>
         </div>
-        <button onclick="openPredictionModal('${away}', '${home}', '${awayPitcher}', '${homePitcher}')" 
-                class="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-2xl text-sm font-medium whitespace-nowrap">
+        <button onclick="openPredictionModal('${away}', '${home}', '${awayP}', '${homeP}')" 
+                class="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-2xl text-sm font-medium">
           Predict
         </button>
       </div>
@@ -106,24 +101,24 @@ function renderTopPlays() {
   const container = document.getElementById('top-plays');
   if (allPredictions.length === 0) {
     container.innerHTML = `<h2 class="text-2xl font-bold mb-4">Top 4 Plays Today</h2>
-      <p class="text-zinc-400 text-sm">Make predictions on games above — strongest ones will appear here</p>`;
+      <p class="text-zinc-400 text-sm">Make  predictions on games — strongest will appear here</p>`;
     return;
   }
-  // Sort by confidence (farthest from 50%)
-  allPredictions.sort((a, b) => Math.abs(b.prob - 0.5) - Math.abs(a.prob - 0.5));
-  const top4 = allPredictions.slice(0, 4);
+
+  allPredictions.sort((a,b) => Math.abs(b.prob - 0.5) - Math.abs(a.prob - 0.5));
+  const top4 = allPredictions.slice(0,4);
 
   let html = `<h2 class="text-2xl font-bold mb-4">Top 4 Plays Today</h2>`;
   top4.forEach(p => {
     const isNRFI = p.prob > 0.5;
     html += `
       <div class="bg-zinc-900 rounded-3xl p-5 border-l-4 ${isNRFI ? 'border-green-400' : 'border-red-400'}">
-        <div class="flex justify-between">
+        <div class="flex justify-between items-start">
           <div>
             <div class="text-sm text-zinc-400">${p.game}</div>
             <div class="text-3xl font-bold">${isNRFI ? 'NRFI' : 'YRFI'} <span class="text-4xl">${Math.round(p.prob*100)}%</span></div>
           </div>
-          <div class="text-right text-xs max-w-[160px] text-zinc-400">${p.reason}</div>
+          <div class="text-right text-xs text-zinc-400 max-w-[170px]">${p.reason}</div>
         </div>
       </div>`;
   });
@@ -132,38 +127,38 @@ function renderTopPlays() {
 
 let currentGame = {};
 function openPredictionModal(away, home, awayP, homeP) {
-  currentGame = {away, home, awayP, homeP, game: `${away} @ ${home}`};
+  currentGame = {game: `${away} @ ${home}`, away, home, awayP, homeP};
 
   const modalHTML = `
     <div class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4" onclick="if(event.target===this)closeModal()">
-      <div onclick="event.stopImmediatePropagation()" class="bg-zinc-900 rounded-3xl w-full max-w-lg p-6 max-h-[92vh] overflow-auto">
-        <h3 class="text-2xl font-bold mb-1">${away} @ ${home}</h3>
+      <div onclick="event.stopImmediatePropagation()" class="bg-zinc-900 rounded-3xl w-full max-w-lg p-6 max-h-[90vh] overflow-auto">
+        <h3 class="text-xl font-bold">${away} @ ${home}</h3>
         <p class="text-zinc-400 mb-6">${awayP} vs ${homeP}</p>
-
-        <div class="space-y-6">
+        
+        <div class="space-y-5">
           <div>
-            <label class="block text-xs mb-1">Pitcher FIP (avg) — <a href="https://www.fangraphs.com/leaders/major-league?stats=pit&qual=y&type=8" target="_blank" class="text-blue-400">FanGraphs</a></label>
+            <label class="block text-xs mb-1">Pitcher FIP (avg) — <a href="https://www.fangraphs.com/leaders/major-league?stats=pit&qual=y&type=8" target="_blank" class="text-blue-400 underline">FanGraphs</a></label>
             <input id="fip" type="number" step="0.01" value="3.85" class="w-full bg-zinc-800 rounded-2xl px-4 py-3">
           </div>
           <div>
-            <label class="block text-xs mb-1">Opposing 1st-Inning Runs/G — <a href="https://www.teamrankings.com/mlb/stat/1st-inning-runs-per-game" target="_blank" class="text-blue-400">TeamRankings</a></label>
+            <label class="block text-xs mb-1">Opp. 1st-Inning Runs/G — <a href="https://www.teamrankings.com/mlb/stat/1st-inning-runs-per-game" target="_blank" class="text-blue-400 underline">TeamRankings</a></label>
             <input id="teamFI" type="number" step="0.01" value="0.53" class="w-full bg-zinc-800 rounded-2xl px-4 py-3">
           </div>
           <div>
-            <label class="block text-xs mb-1">Park Factor (100=avg) — <a href="https://www.fangraphs.com/guts?type=pf" target="_blank" class="text-blue-400">FanGraphs</a></label>
+            <label class="block text-xs mb-1">Park Factor (100=avg) — <a href="https://www.fangraphs.com/guts?type=pf" target="_blank" class="text-blue-400 underline">FanGraphs</a></label>
             <input id="park" type="number" value="98" class="w-full bg-zinc-800 rounded-2xl px-4 py-3">
           </div>
           <div>
-            <label class="block text-xs mb-1">Wind mph (+ = out, - = in)</label>
+            <label class="block text-xs mb-1">Wind mph (+ = blowing out)</label>
             <input id="wind" type="number" step="0.1" value="-5" class="w-full bg-zinc-800 rounded-2xl px-4 py-3">
           </div>
           <div>
-            <label class="block text-xs mb-1">Arsenal Matchup Adj (-0.2 to 0.2)</label>
+            <label class="block text-xs mb-1">Arsenal Adj (-0.2 to +0.2)</label>
             <input id="arsenal" type="number" step="0.01" value="0" class="w-full bg-zinc-800 rounded-2xl px-4 py-3">
           </div>
         </div>
-
-        <button onclick="calculatePrediction()" class="mt-8 w-full bg-white text-black font-semibold py-4 rounded-2xl">Calculate Prediction</button>
+        
+        <button onclick="calculatePrediction()" class="mt-8 w-full bg-white text-black py-4 rounded-2xl font-semibold">Calculate & Add to Top Plays</button>
       </div>
     </div>`;
 
@@ -179,26 +174,22 @@ function calculatePrediction() {
   const wind = parseFloat(document.getElementById('wind').value) || 0;
   const arsenal = parseFloat(document.getElementById('arsenal').value) || 0;
 
-  let probNRFI = 0.60;
-  probNRFI -= (fip - 3.8) * 0.085;
-  probNRFI -= (teamFI - 0.5) * 0.28;
-  probNRFI -= (park - 100) * 0.0035;
-  probNRFI -= wind * 0.013;
-  probNRFI += arsenal;
-  probNRFI = Math.max(0.20, Math.min(0.85, probNRFI));
+  let prob = 0.60;
+  prob -= (fip - 3.8) * 0.085;
+  prob -= (teamFI - 0.5) * 0.28;
+  prob -= (park - 100) * 0.0035;
+  prob -= wind * 0.013;
+  prob += arsenal;
+  prob = Math.max(0.20, Math.min(0.85, prob));
 
-  const reason = `FIP ${fip.toFixed(2)}, Opp 1st ${teamFI.toFixed(2)}, Wind ${wind}, Park ${park}`;
+  const reason = `FIP:${fip.toFixed(1)} | Opp1st:${teamFI.toFixed(2)} | Wind:${wind} | Park:${park}`;
 
-  allPredictions.push({
-    game: currentGame.game,
-    prob: probNRFI,
-    reason: reason
-  });
+  allPredictions.push({game: currentGame.game, prob: prob, reason: reason});
 
-  alert(`Prediction saved: ${probNRFI > 0.5 ? 'NRFI' : 'YRFI'} ${Math.round(probNRFI*100)}%`);
+  alert(`Added: ${prob > 0.5 ? 'NRFI' : 'YRFI'} ${Math.round(prob*100)}% for ${currentGame.game}`);
 
   closeModal();
-  renderTopPlays();   // Refresh Top 4 immediately
+  renderTopPlays();
 }
 
 function closeModal() {
@@ -206,9 +197,10 @@ function closeModal() {
 }
 
 function showHistory() {
-  alert("Your predictions are saved locally. After games, return here to log actual results (we'll add full history editing soon).");
+  alert("Predictions are saved in memory for this session. Full history logging coming soon.");
 }
 
+// Init
 if (apiKey) document.getElementById('apiKey').value = apiKey;
 fetchTodayGames();
 </script>
